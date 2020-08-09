@@ -1,0 +1,31 @@
+[package]
+name = "throatql"
+version = "0.1.0"
+authors = ["Ferocious Ferret <fferret.ovarit@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = ""
+env_logger = ""
+futures = ""
+dataloader = { version = "0.12", default-features = false, features = ["runtime-tokio"]}
+async-trait = ""
+unicase = ""
+anyhow = ""
+futures-util = "0.3.5"
+juniper = {git = "https://github.com/graphql-rust/juniper.git"}
+juniper_warp = {git = "https://github.com/graphql-rust/juniper.git"}
+log = ""
+sqlx = { git = "https://github.com/launchbadge/sqlx.git", default-features = false, features = [ "runtime-tokio", "macros", "postgres", "uuid", "json", "tls", "chrono" ] }
+tokio = { version = "0.2.22", features = ["macros"] }
+warp = "0.2"
+
+[lib]
+name = "model"
+path = "src/lib.rs"
+
+[[bin]]
+name = "throatql"
+path = "src/main.rs" 
