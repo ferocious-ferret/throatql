@@ -2,6 +2,7 @@ use dataloader::cached::Loader;
 use juniper::{graphql_object, FieldError, GraphQLObject, ID};
 use std::{collections::HashMap, sync::Arc};
 use unicase::UniCase;
+pub mod auth;
 mod comment;
 mod post;
 /// Top level concepts for Queries should be
@@ -40,6 +41,7 @@ type GLoader<Key, Value, L> =
     Loader<Key, Result<Value, Arc<FieldError>>, L, HashMap<Key, Result<Value, Arc<FieldError>>>>;
 
 pub struct Context {
+    pub user: auth::UserState,
     pub pool: sqlx::Pool<sqlx::Postgres>, // This should probably be any, but I didn't compile with any so ???
     pub sub_loader: GLoader<UniCase<String>, sub::Sub, sub::SubLoader>,
     pub user_loader: GLoader<UniCase<String>, user::User, user::UserLoader>,
@@ -47,8 +49,9 @@ pub struct Context {
     pub comment_loader: GLoader<String, comment::Comment, comment::CommentLoader>,
 }
 impl Context {
-    pub fn new(pool: sqlx::Pool<sqlx::Postgres>) -> Self {
+    pub fn new(user: auth::UserState, pool: sqlx::Pool<sqlx::Postgres>) -> Self {
         Context {
+            user,
             pool: pool.clone(),
             sub_loader: Loader::new(sub::SubLoader { pool: pool.clone() }),
             user_loader: Loader::new(user::UserLoader { pool: pool.clone() }),

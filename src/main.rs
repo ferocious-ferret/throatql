@@ -1,4 +1,4 @@
-use model::{Context, Query, Schema};
+use model::{auth, Context, Query, Schema};
 use std::env;
 use warp::{http::Response, Filter};
 
@@ -31,7 +31,17 @@ async fn main() {
         .await
         .unwrap();
 
-    let state = warp::any().map(move || Context::new(pool.clone()));
+    let auth_pool = pool.clone();
+    let user = warp::any().and(
+        warp::header::<String>("authorization")
+            .and(warp::any().map(move || auth_pool.clone()))
+            .map(auth::UserState::login)
+            .or(warp::any().map(auth::UserState::anonymous))
+            .unify(),
+    );
+    let state = warp::any()
+        .and(user)
+        .map(move |user: auth::UserState| -> Context { Context::new(user, pool.clone()) });
     let graphql_filter = juniper_warp::make_graphql_filter(schema(), state.boxed());
 
     warp::serve(

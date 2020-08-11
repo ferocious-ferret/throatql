@@ -9,6 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct Comment {
+    sid: Option<String>,
     cid: String,
     content: Option<String>,
     last_edit: Option<NaiveDateTime>,
@@ -58,16 +59,36 @@ impl Comment {
         self.cid.clone()
     }
 
-    fn content(&self, _ctx: &Context) -> Option<String> {
-        self.content.clone()
+    fn content(&self, context: &Context) -> &Option<String> {
+        if self.status == DeleteStatus::Not
+            || context.user.can_view_deleted(
+                &self.sid.to_owned().unwrap_or_else(|| "".to_string()),
+                &self.uid.to_owned().unwrap_or_else(|| "".to_string()),
+            )
+        {
+            &self.content
+        } else {
+            &None
+        }
+    }
+
+    fn deleted(&self, _context: &Context) -> &DeleteStatus {
+        &self.status
     }
 
     fn last_edit(&self, _ctx: &Context) -> Option<NaiveDateTime> {
         self.last_edit
     }
 
-    async fn parent(&self, _ctx: &Context) -> Result<Comment, FieldError> {
-        unimplemented!()
+    async fn parent(&self, ctx: &Context) -> Result<Comment, FieldError> {
+        let parent_cid = self
+            .parent_cid
+            .clone()
+            .ok_or_else(|| "No Parent".to_string())?;
+        ctx.comment_loader
+            .load(parent_cid)
+            .await
+            .map_err(|err| format!("{:?}", err).into())
     }
 
     async fn children(
@@ -157,14 +178,19 @@ impl BatchFn<String, Result<Comment, Arc<FieldError>>> for CommentLoader {
         let comments: Vec<_> = sqlx::query!(
             r#"
                 SELECT p.cid, p.content, p.lastedit, p.parentcid, p.pid, p.score, p.upvotes, 
-                       p.downvotes, p.status, p.time, p.uid, c.child_arr as children
+                       p.downvotes, p.status, p.time, p.uid, c.child_arr as children, sp.sid
                 FROM sub_post_comment   p
                 LEFT JOIN ( 
                     SELECT c.parentcid AS cid, array_agg(c.cid) as child_arr
                     FROM sub_post_comment AS c
                     GROUP BY c.parentcid
                 ) c USING (cid)
+                LEFT JOIN (
+                    SELECT sp.pid, sp.sid
+                    FROM sub_post as sp
+                ) sp using (pid)
                 WHERE p.cid = ANY($1::text[])
+                AND sp.pid = p.pid
             "#,
             keys
         )
@@ -172,6 +198,7 @@ impl BatchFn<String, Result<Comment, Arc<FieldError>>> for CommentLoader {
         .map(|comment| -> Result<Comment, FieldError> {
             let comment = comment?;
             Ok(Comment {
+                sid: comment.sid,
                 children: comment.children.unwrap_or_default(),
                 cid: comment.cid.clone(),
                 uid: comment.uid,

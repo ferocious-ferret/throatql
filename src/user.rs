@@ -43,8 +43,9 @@ impl User {
         self.uid.clone()
     }
 
-    fn crypto(&self, _ctx: &Context) -> Crypto {
-        self.crypto
+    fn crypto(&self, ctx: &Context) -> Result<Crypto, FieldError> {
+        ctx.user.private_user_data(&self.uid)?;
+        Ok(self.crypto)
     }
 
     fn joindate(&self, _ctx: &Context) -> Option<NaiveDateTime> {
@@ -55,12 +56,9 @@ impl User {
         self.name.clone()
     }
 
-    fn email(&self, _ctx: &Context) -> Option<String> {
-        self.email.clone()
-    }
-
-    fn password(&self, _ctx: &Context) -> Option<String> {
-        self.password.clone()
+    fn email(&self, ctx: &Context) -> Result<Option<String>, FieldError> {
+        ctx.user.private_user_data(&self.uid)?;
+        Ok(self.email.clone())
     }
 
     fn score(&self, _ctx: &Context) -> i32 {
@@ -75,8 +73,9 @@ impl User {
         self.status
     }
 
-    fn resets(&self, _ctx: &Context) -> i32 {
-        self.resets
+    fn resets(&self, ctx: &Context) -> Result<i32, FieldError> {
+        ctx.user.private_user_data(&self.uid)?;
+        Ok(self.resets)
     }
 
     async fn posts(

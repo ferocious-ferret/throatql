@@ -7,7 +7,7 @@ use futures_util::stream::StreamExt;
 use juniper::{graphql_object, FieldError, GraphQLEnum, ID};
 use std::{collections::HashMap, sync::Arc};
 
-#[derive(Debug, Clone, GraphQLEnum)]
+#[derive(Debug, Clone, GraphQLEnum, PartialEq)]
 pub enum DeleteStatus {
     Not,
     User,
@@ -46,8 +46,17 @@ impl Post {
         self.pid.to_string().into()
     }
 
-    fn content(&self, _context: &Context) -> &Option<String> {
-        &self.content
+    fn content(&self, context: &Context) -> &Option<String> {
+        if self.deleted == DeleteStatus::Not
+            || context.user.can_view_deleted(
+                &self.sid.to_owned().unwrap_or_else(|| "".to_string()),
+                &self.uid.to_owned().unwrap_or_else(|| "".to_string()),
+            )
+        {
+            &self.content
+        } else {
+            &None
+        }
     }
 
     fn deleted(&self, _context: &Context) -> &DeleteStatus {
