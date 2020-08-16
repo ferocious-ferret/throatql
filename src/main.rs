@@ -50,6 +50,13 @@ async fn main() {
             .and(juniper_warp::graphiql_filter("/graphql", None))
             .or(homepage)
             .or(warp::path("graphql").and(graphql_filter))
+            .with(
+                warp::cors()
+                    .allow_method("POST")
+                    .allow_header("authorization")
+                    .allow_headers(vec!["content-type"])
+                    .allow_any_origin(),
+            )
             .with(log),
     )
     .run(([127, 0, 0, 1], 8080))

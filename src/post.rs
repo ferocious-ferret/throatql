@@ -1,5 +1,5 @@
+use crate::{auth::UserState, sub::Sub, user::User};
 use crate::{comment::Comment, Context, Cursor, Edge, Page, PageInfo};
-use crate::{sub::Sub, user::User};
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use dataloader::BatchFn;
@@ -25,6 +25,8 @@ pub enum PostType {
 #[derive(Debug, Clone)]
 pub struct Post {
     pub pid: i32,
+    pub down_votes: i32,
+    pub up_votes: i32,
     pub content: Option<String>,
     pub deleted: DeleteStatus,
     pub link: Option<String>,
@@ -57,6 +59,18 @@ impl Post {
         } else {
             &None
         }
+    }
+
+    fn up_votes(&self, _context: &Context) -> i32 {
+        self.up_votes
+    }
+
+    fn down_votes(&self, _context: &Context) -> i32 {
+        self.down_votes
+    }
+
+    fn score(&self, _context: &Context) -> i32 {
+        self.up_votes - self.down_votes
     }
 
     fn deleted(&self, _context: &Context) -> &DeleteStatus {
@@ -147,15 +161,85 @@ impl Post {
                 .collect(),
         }
     }
+
+    fn comment_count(&self, _context: &Context) -> i32 {
+        self.comments.len() as i32
+    }
 }
 
 pub struct PostLoader {
     pub pool: sqlx::PgPool,
 }
 
+pub async fn get_home_posts(
+    context: &Context,
+    count: Option<i32>,
+    after: Option<String>,
+) -> Result<Page<Post>, FieldError> {
+    match context.user {
+        UserState::Anonymous => {
+            get_related_posts(
+                context,
+                sqlx::query!(
+                    r#"
+                    SELECT value
+                    FROM site_metadata
+                    WHERE key = 'default'
+                    "#
+                )
+                .fetch(&context.pool)
+                .map(|metadata| -> Option<String> {
+                    if let Ok(metadata) = metadata {
+                        metadata.value
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .filter_map(|v| v)
+                .collect::<Vec<_>>(),
+                count,
+                after,
+            )
+            .await
+        }
+        UserState::LoggedIn { ref id, .. } => {
+            get_related_posts(
+                context,
+                sqlx::query!(
+                    r#"
+                    SELECT sid as value 
+                    FROM sub_subscriber 
+                    WHERE uid = $1
+                    "#,
+                    id
+                )
+                .fetch(&context.pool)
+                .map(|metadata| -> Option<String> {
+                    if let Ok(metadata) = metadata {
+                        metadata.value
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .filter_map(|v| v)
+                .collect::<Vec<_>>(),
+                count,
+                after,
+            )
+            .await
+        }
+    }
+}
+
 pub async fn get_related_posts(
     context: &Context,
-    id: String,
+    id: Vec<String>,
     count: Option<i32>,
     after: Option<String>,
 ) -> Result<Page<Post>, FieldError> {
@@ -163,8 +247,9 @@ pub async fn get_related_posts(
     let after: i64 = after.map(|v| v.parse().unwrap_or(0)).unwrap_or(0);
 
     let edges = sqlx::query!(
-            r#"
-            SELECT pid, content, deleted, link, nsfw, posted, edited, ptype, sid, thumbnail, title, uid, flair, c.child_arr as comments
+        r#"
+            SELECT pid, content, deleted, link, nsfw, posted, edited, ptype, sid, thumbnail, 
+            title, uid, flair, c.child_arr as comments, v.up as up_votes, v.down as down_votes
             FROM sub_post
             LEFT JOIN ( 
                 SELECT c.pid AS pid, array_agg(c.cid) as child_arr
@@ -172,56 +257,71 @@ pub async fn get_related_posts(
                 where c.parentcid IS NULL
                 GROUP BY c.pid
             ) c USING (pid)
-            WHERE uid = $3 OR sid = $3
+            LEFT JOIN (
+                SELECT v.pid as pid, 
+                SUM (CASE WHEN v.positive > 0 THEN 1 ELSE 0 END) AS up,
+                SUM (CASE WHEN v.positive < 0 THEN 1 ELSE 0 END) AS down
+                FROM sub_post_vote as v
+                GROUP BY v.pid
+            ) v USING (pid)
+            WHERE uid = ANY($3) OR sid = ANY($3)
             ORDER BY posted
             LIMIT $1
             OFFSET $2
-            "#, 
-            count as i64,
-            after as i64,
-            id
-        )
-        .fetch(&context.pool)
-        .enumerate()
-        .map(|(i, post)| -> Result<Edge<Post>, FieldError> {
-            let post = post?;
+            "#,
+        count as i64,
+        after as i64,
+        id.as_slice()
+    )
+    .fetch(&context.pool)
+    .enumerate()
+    .map(|(i, post)| -> Result<Edge<Post>, FieldError> {
+        let post = post?;
 
-            Ok(Edge {
-                node: Post{
-                    posted: post.posted,
-                    pid: post.pid,
-                    flair: post.flair,
-                    uid: post.uid,
-                    title: post.title,
-                    nsfw: post.nsfw.unwrap_or(false),
-                    content: post.content,
-                    thumbnail: post.thumbnail,
-                    sid: post.sid,
-                    comments: post.comments.unwrap_or_default(),
-                    ptype: match post.ptype {
-                        Some(0) => Ok(PostType::Text),
-                        Some(1) => Ok(PostType::Link),
-                        Some(3) => Ok(PostType::Poll),
-                        _ => Err(format!("Unknown Post Type! {:?} - {:?}", post.pid, post.ptype))
-                    }?,
-                    edited: post.edited,
-                    link: post.link,
-                    deleted: match post.deleted {
-                        Some(1) => Ok(DeleteStatus::User),
-                        Some(2) => Ok(DeleteStatus::Mod),
-                        Some(3) => Ok(DeleteStatus::Admin),
-                        Some(0) => Ok(DeleteStatus::Not),
-                        None => Ok(DeleteStatus::Not),
-                        _ => Err(format!("Unknown Delete Type! {:?} - {:?}", post.pid, post.deleted))
-                    }?,
-                },
-                cursor: format!("{}", i),
-            })
+        Ok(Edge {
+            node: Post {
+                up_votes: post.up_votes.unwrap_or(0) as i32,
+                down_votes: post.down_votes.unwrap_or(0) as i32,
+                posted: post.posted,
+                pid: post.pid,
+                flair: post.flair,
+                uid: post.uid,
+                title: post.title,
+                nsfw: post.nsfw.unwrap_or(false),
+                content: post.content,
+                thumbnail: post.thumbnail,
+                sid: post.sid,
+                comments: post.comments.unwrap_or_default(),
+                ptype: match post.ptype {
+                    Some(0) => Ok(PostType::Text),
+                    Some(1) => Ok(PostType::Link),
+                    Some(3) => Ok(PostType::Poll),
+                    _ => Err(format!(
+                        "Unknown Post Type! {:?} - {:?}",
+                        post.pid, post.ptype
+                    )),
+                }?,
+                edited: post.edited,
+                link: post.link,
+                deleted: match post.deleted {
+                    Some(1) => Ok(DeleteStatus::User),
+                    Some(2) => Ok(DeleteStatus::Mod),
+                    Some(3) => Ok(DeleteStatus::Admin),
+                    Some(0) => Ok(DeleteStatus::Not),
+                    None => Ok(DeleteStatus::Not),
+                    _ => Err(format!(
+                        "Unknown Delete Type! {:?} - {:?}",
+                        post.pid, post.deleted
+                    )),
+                }?,
+            },
+            cursor: format!("{}", i),
         })
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    })
+    .collect::<Vec<_>>()
+    .await
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
 
     let end_cursor = edges
         .iter()
@@ -234,9 +334,9 @@ pub async fn get_related_posts(
             r#"
                 SELECT count(*) as "cnt!"
                 FROM sub_post
-                WHERE uid = $1 OR sid = $1
+                WHERE uid = ANY($1) OR sid = ANY($1)
                 "#,
-            id
+            id.as_slice()
         )
         .fetch_one(&context.pool)
         .await?
@@ -252,7 +352,8 @@ impl BatchFn<i32, Result<Post, Arc<FieldError>>> for PostLoader {
     async fn load(&self, ids: &[i32]) -> HashMap<i32, Result<Post, Arc<FieldError>>> {
         let posts: Vec<Result<Post, FieldError>> = sqlx::query!(
             r#"
-            SELECT pid, content, deleted, link, nsfw, posted, edited, ptype, sid, thumbnail, title, uid, flair, c.child_arr as comments
+            SELECT pid, content, deleted, link, nsfw, posted, edited, ptype, sid, thumbnail, 
+            title, uid, flair, c.child_arr as comments, v.up as up_votes, v.down as down_votes
             FROM sub_post
             LEFT JOIN ( 
                 SELECT c.pid AS pid, array_agg(c.cid) as child_arr
@@ -260,6 +361,13 @@ impl BatchFn<i32, Result<Post, Arc<FieldError>>> for PostLoader {
                 where c.parentcid IS NULL
                 GROUP BY c.pid
             ) c USING (pid)
+            LEFT JOIN (
+                SELECT v.pid as pid, 
+                SUM (CASE WHEN v.positive > 0 THEN 1 ELSE 0 END) AS up,
+                SUM (CASE WHEN v.positive < 0 THEN 1 ELSE 0 END) AS down
+                FROM sub_post_vote as v
+                GROUP BY v.pid
+            ) v USING (pid)
             WHERE pid = ANY($1)
             "#,
             ids
@@ -268,6 +376,8 @@ impl BatchFn<i32, Result<Post, Arc<FieldError>>> for PostLoader {
         .map(|post| -> Result<Post, FieldError> {
             let post = post?;
             Ok(Post {
+                up_votes: post.up_votes.unwrap_or(0) as i32,
+                down_votes: post.down_votes.unwrap_or(0) as i32,
                 posted: post.posted,
                 pid: post.pid,
                 flair: post.flair,

@@ -84,7 +84,7 @@ impl User {
         count: Option<i32>,
         after: Option<String>,
     ) -> Result<Page<Post>, FieldError> {
-        post::get_related_posts(context, self.uid.clone(), count, after).await
+        post::get_related_posts(context, vec![self.uid.clone()], count, after).await
     }
 }
 

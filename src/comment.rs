@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use dataloader::BatchFn;
 use futures_util::stream::StreamExt;
-use juniper::{graphql_object, FieldError};
+use juniper::{graphql_object, FieldError, ID};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Debug, Clone)]
@@ -55,8 +55,8 @@ impl Page<Result<Comment, FieldError>> {
 
 #[graphql_object(context = Context)]
 impl Comment {
-    fn cid(&self, _ctx: &Context) -> String {
-        self.cid.clone()
+    fn id(&self, _ctx: &Context) -> ID {
+        self.cid.clone().into()
     }
 
     fn content(&self, context: &Context) -> &Option<String> {

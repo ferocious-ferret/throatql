@@ -96,6 +96,14 @@ impl Query {
             .map_err(|err| format!("{:?}", err).into())
     }
 
+    async fn get_home_posts(
+        context: &Context,
+        count: Option<i32>,
+        after: Option<String>,
+    ) -> Result<Page<post::Post>, FieldError> {
+        post::get_home_posts(context, count, after).await
+    }
+
     async fn get_user(context: &Context, name: String) -> Result<user::User, FieldError> {
         context
             .user_loader

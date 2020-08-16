@@ -1,11 +1,12 @@
 use crate::post::{self, Post};
-use crate::{Context, Cursor, Edge, Page, PageInfo};
+use crate::{user::User, Context, Cursor, Edge, Page, PageInfo};
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use dataloader::BatchFn;
 use futures_util::stream::StreamExt;
-use juniper::{graphql_object, FieldError, FieldResult};
+use juniper::{graphql_object, ieldResult, FieldError};
 use std::{collections::HashMap, sync::Arc};
+use unicase::UniCase;
 
 #[derive(Debug, Clone)]
 pub struct Sub {
@@ -40,7 +41,7 @@ impl Sub {
         count: Option<i32>,
         after: Option<String>,
     ) -> Result<Page<Post>, FieldError> {
-        post::get_related_posts(context, self.sid.clone(), count, after).await
+        post::get_related_posts(context, vec![self.sid.clone()], count, after).await
     }
 
     fn name(&self, _context: &Context) -> &Option<String> {
@@ -57,6 +58,34 @@ impl Sub {
 
     fn title(&self, _context: &Context) -> &Option<String> {
         &self.title
+    }
+
+    async fn mods(&self, context: &Context) -> Vec<User> {
+        let ids = sqlx::query!(
+            r#"
+            SELECT uid
+            FROM sub_mod
+            WHERE sid = $1
+            "#,
+            self.sid
+        )
+        .fetch(&context.pool)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .filter_map(|m| match m {
+            Ok(m) => Some(UniCase::new(m.uid)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+        context
+            .user_loader
+            .load_many(ids)
+            .await
+            .values()
+            .filter_map(|user| user.clone().ok())
+            .collect::<Vec<_>>()
     }
 
     fn creation(&self, _context: &Context) -> &NaiveDateTime {
