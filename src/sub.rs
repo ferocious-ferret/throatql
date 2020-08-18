@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use dataloader::BatchFn;
 use futures_util::stream::StreamExt;
-use juniper::{graphql_object, ieldResult, FieldError};
+use juniper::{graphql_object, FieldError, FieldResult};
 use std::{collections::HashMap, sync::Arc};
 use unicase::UniCase;
 
