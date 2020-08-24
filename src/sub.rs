@@ -159,6 +159,7 @@ pub async fn get_subs(
         SELECT name, nsfw, sidebar, title, creation, sid 
         FROM sub
         WHERE name > $1
+        ORDER BY name
         LIMIT $2
         "#,
         after,
