@@ -13,6 +13,7 @@ fn schema() -> Schema {
 #[tokio::main]
 async fn main() {
     // std::env::set_var("RUST_LOG", "warp_async");
+    dotenv::dotenv().ok();
     env_logger::init();
 
     let log = warp::log("warp_server");
